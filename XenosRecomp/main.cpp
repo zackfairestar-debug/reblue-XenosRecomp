@@ -1,6 +1,7 @@
 #include "shader.h"
 #include "shader_recompiler.h"
 #include "dxc_compiler.h"
+#include "spirv_lower_int64.h"
 
 #include <mutex>
 #include <vector>
@@ -42,6 +43,13 @@ struct ShaderFailure
 
 static std::mutex g_failureMutex;
 static std::vector<ShaderFailure> g_failures;
+
+// XENOS_RECOMP_LOWER_INT64: emit SPIR-V without the Int64 capability, for
+// drivers that report shaderInt64 = false (see spirv_lower_int64.h).
+static const bool g_lowerInt64 = [] {
+    const char* value = std::getenv("XENOS_RECOMP_LOWER_INT64");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}();
 
 int main(int argc, char** argv)
 {
@@ -200,7 +208,26 @@ int main(int argc, char** argv)
                     return;
                 }
 
-                if (!smolv::Encode(spirv->GetBufferPointer(), spirv->GetBufferSize(), shader.spirv, smolv::kEncodeFlagStripDebugInfo))
+                const uint32_t* spirvWords = reinterpret_cast<const uint32_t*>(spirv->GetBufferPointer());
+                std::vector<uint32_t> lowered(spirvWords, spirvWords + spirv->GetBufferSize() / sizeof(uint32_t));
+                if (g_lowerInt64)
+                {
+                    std::string lowerError;
+                    if (!LowerInt64(lowered, lowerError) && !lowerError.empty())
+                    {
+                        spirv->Release();
+                        fmt::println(stderr, "int64 lowering failed for {:016X}: {}", hash, lowerError);
+                        recordFailure("int64-lowering-failed");
+                        return;
+                    }
+                    if (const char* dumpDir = std::getenv("XENOS_RECOMP_SPIRV_DUMP"))
+                    {
+                        auto path = std::filesystem::path(dumpDir) / fmt::format("{:016X}.spv", hash);
+                        writeAllBytes(path.string().c_str(), lowered.data(), lowered.size() * sizeof(uint32_t));
+                    }
+                }
+
+                if (!smolv::Encode(lowered.data(), lowered.size() * sizeof(uint32_t), shader.spirv, smolv::kEncodeFlagStripDebugInfo))
                 {
                     spirv->Release();
                     recordFailure("smolv-encode-failed");

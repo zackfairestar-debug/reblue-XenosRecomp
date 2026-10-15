@@ -16,6 +16,8 @@ add_executable(XenosRecomp
     shader_code.h
     shader_recompiler.cpp
     shader_recompiler.h
+    spirv_lower_int64.cpp
+    spirv_lower_int64.h
     "${SMOLV_SOURCE_DIR}/smolv.cpp")
 
 target_link_libraries(XenosRecomp PRIVATE
