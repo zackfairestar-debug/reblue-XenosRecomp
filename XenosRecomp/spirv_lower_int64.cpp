@@ -189,14 +189,16 @@ bool LowerInt64(std::vector<uint32_t>& words, std::string& error)
         }
     }
 
-    if (u32 == 0 || u32Index > first64Index)
-    {
-        error = "uint32 type missing or declared after the 64-bit type";
-        return false;
-    }
-
     uint32_t bound = words[3];
     auto newId = [&] { return bound++; };
+
+    // The lowered values are built from uint32: declare it where the 64-bit
+    // type was when the module has none, or move it there when it comes later.
+    // A plain OpTypeInt depends on nothing, so moving it up is always legal.
+    const bool createU32 = u32 == 0;
+    const bool moveU32 = !createU32 && u32Index > first64Index;
+    if (createU32)
+        u32 = newId();
 
     // Declarations that replace the first 64-bit OpTypeInt.
     const bool moveVector = v2u32 != 0 && v2u32Index > first64Index;
@@ -279,6 +281,8 @@ bool LowerInt64(std::vector<uint32_t>& words, std::string& error)
                 {
                     if (i == first64Index)
                     {
+                        if (createU32 || moveU32)
+                            out.push_back(Make(OpTypeInt, {u32, 32, 0}));
                         if (moveVector || v2u32Index == SIZE_MAX)
                             out.push_back(Make(OpTypeVector, {v2u32, u32, 2}));
                         out.push_back(Make(OpTypeStruct, {carryStruct, u32, u32}));
@@ -289,6 +293,8 @@ bool LowerInt64(std::vector<uint32_t>& words, std::string& error)
                     }
                     continue;
                 }
+                if (moveU32 && w[1] == u32)
+                    continue; // already emitted ahead of the 64-bit type
                 break;
             case OpTypeVector:
                 if (w[1] == v2u32 && moveVector)

@@ -51,8 +51,42 @@ static const bool g_lowerInt64 = [] {
     return value != nullptr && value[0] != '\0' && value[0] != '0';
 }();
 
+// --lower-int64-header <in.spv> <out.h> <symbol>: lowers one SPIR-V module the
+// way XENOS_RECOMP_LOWER_INT64 does the guest shaders, and writes it as the
+// C array dxc -Fh would have produced. For host HLSL that includes
+// shader_common.h and so carries the same 64-bit address arithmetic.
+static int LowerInt64Header(const char* input, const char* output, const char* symbol)
+{
+    size_t size = 0;
+    auto data = readAllBytes(input, size);
+    if (!data || size % sizeof(uint32_t) != 0)
+    {
+        fmt::println(stderr, "{}: not a SPIR-V module", input);
+        return 1;
+    }
+    std::vector<uint32_t> words(size / sizeof(uint32_t));
+    std::memcpy(words.data(), data.get(), size);
+    std::string error;
+    if (!LowerInt64(words, error) && !error.empty())
+    {
+        fmt::println(stderr, "{}: int64 lowering failed: {}", input, error);
+        return 1;
+    }
+    const auto* bytes = reinterpret_cast<const uint8_t*>(words.data());
+    const size_t byteCount = words.size() * sizeof(uint32_t);
+    std::string text = fmt::format("const unsigned char {}[] = {{", symbol);
+    for (size_t i = 0; i < byteCount; i++)
+        text += fmt::format("{}0x{:02x},", (i % 16 == 0) ? "\n  " : " ", bytes[i]);
+    text += "\n};\n";
+    writeAllBytes(output, text.data(), text.size());
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
+    if (argc == 5 && std::strcmp(argv[1], "--lower-int64-header") == 0)
+        return LowerInt64Header(argv[2], argv[3], argv[4]);
+
 #ifndef XENOS_RECOMP_INPUT
     if (argc < 4)
     {
