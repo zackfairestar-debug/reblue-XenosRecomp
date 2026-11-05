@@ -1,6 +1,13 @@
 #include "shader_recompiler.h"
 #include "shader_common.h"
 
+// How a shader reads a u32 of the shared constant block at a byte offset.
+#ifdef REBLUE_RECOMP
+#define SHARED_U32_LOAD_FMT "REBLUE_SC_U32({})"
+#else
+#define SHARED_U32_LOAD_FMT "vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})"
+#endif
+
 static constexpr char SWIZZLES[] = 
 { 
     'x',
@@ -1333,6 +1340,22 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         {
             const char* shaderName = isPixelShader ? "Pixel" : "Vertex";
 
+#ifdef REBLUE_RECOMP
+            // Uniform buffer reads (shader_common.h), indexed by register.
+            const char* constantArray = isPixelShader ? "g_GuestPSC" : "g_GuestVSC";
+            (void)shaderName;
+            if (constantInfo->registerCount > 1)
+            {
+                uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
+
+                println("#define {}(INDEX) select((INDEX) < {}, {}[{} + min(INDEX, {})], 0.0)",
+                    constantName, tailCount, constantArray, constantInfo->registerIndex.get(), tailCount - 1);
+            }
+            else
+            {
+                println("#define {} {}[{}]", constantName, constantArray, constantInfo->registerIndex.get());
+            }
+#else
             if (constantInfo->registerCount > 1)
             {
                 uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
@@ -1345,6 +1368,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 println("#define {} vk::RawBufferLoad<float4>(g_PushConstants.{}ShaderConstants + {}, 0x10)",
                     constantName, shaderName, constantInfo->registerIndex * 16);
             }
+#endif
             
 #ifdef REBLUE_RECOMP
             // BD aliases a singleton constant over an array slot; the wider registrant wins so body and cbuffer agree.
@@ -1367,11 +1391,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         {
             for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
             {
-                println("#define {}_Texture{}DescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
+                println("#define {}_Texture{}DescriptorIndex " SHARED_U32_LOAD_FMT,
                     constantName, TEXTURE_DIMENSIONS[j], j * 64 + constantInfo->registerIndex * 4);
             }
 
-            println("#define {}_SamplerDescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
+            println("#define {}_SamplerDescriptorIndex " SHARED_U32_LOAD_FMT,
                 constantName, std::size(TEXTURE_DIMENSIONS) * 64 + constantInfo->registerIndex * 4);
 
             samplers.emplace(constantInfo->registerIndex, constantName);
@@ -1389,10 +1413,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             continue;
         for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
         {
-            println("#define s{}_Texture{}DescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
+            println("#define s{}_Texture{}DescriptorIndex " SHARED_U32_LOAD_FMT,
                 r, TEXTURE_DIMENSIONS[j], j * 64 + r * 4);
         }
-        println("#define s{}_SamplerDescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
+        println("#define s{}_SamplerDescriptorIndex " SHARED_U32_LOAD_FMT,
             r, std::size(TEXTURE_DIMENSIONS) * 64 + r * 4);
     }
 #endif

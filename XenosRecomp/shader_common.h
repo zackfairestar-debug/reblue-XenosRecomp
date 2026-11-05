@@ -42,19 +42,36 @@ struct PushConstants
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PushConstants;
 
+// The guest constants as uniform buffers in set 5, bound with dynamic offsets
+// into the per-frame upload chunk. A vk::RawBufferLoad through a device address
+// is a memory load on every invocation (and, without shaderInt64, 64-bit
+// address math on top), where mobile GPUs keep uniform buffer data in their
+// constant RAM. The REBLUE_*C macros take the same byte offsets the
+// device-address reads used, so the host block layouts do not change. Declared
+// for every shader, since reblue's host blit shaders read them too.
+[[vk::binding(0, 5)]] cbuffer GuestVertexShaderConstants { float4 g_GuestVSC[256]; };
+[[vk::binding(1, 5)]] cbuffer GuestPixelShaderConstants { float4 g_GuestPSC[256]; };
+[[vk::binding(2, 5)]] cbuffer GuestSharedConstants { uint4 g_GuestSC[22]; };
+
+#define REBLUE_VSC(off)    g_GuestVSC[(off) / 16]
+#define REBLUE_PSC(off)    g_GuestPSC[(off) / 16]
+#define REBLUE_SC_U32(off) g_GuestSC[(off) / 16][((off) / 4) % 4]
+#define REBLUE_SC_F32(off) asfloat(REBLUE_SC_U32(off))
+#define REBLUE_SC_F2(off)  float2(REBLUE_SC_F32(off), REBLUE_SC_F32((off) + 4))
+
 #ifdef REBLUE_RECOMP
 // 256-bit boolean register file (BD bool addresses reach ~158), then per-usage 16-bit-pair swap masks.
-#define g_Booleans(i)              vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256 + (i)*4)
-#define g_SwappedTexcoords         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 288)
-#define g_HalfPixelOffset          vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 292)
-#define g_AlphaThreshold           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 300)
-#define g_SwappedNormals           vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 304)
-#define g_SwappedBinormals         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 308)
-#define g_SwappedTangents          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 312)
-#define g_SwappedBlendWeights      vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 316)
-#define g_SwappedPositions         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 320)
-#define g_SintTexcoords            vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 324)
-#define g_ShadowPcfScale           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 328)
+#define g_Booleans(i)              REBLUE_SC_U32(256 + (i)*4)
+#define g_SwappedTexcoords         REBLUE_SC_U32(288)
+#define g_HalfPixelOffset          REBLUE_SC_F2(292)
+#define g_AlphaThreshold           REBLUE_SC_F32(300)
+#define g_SwappedNormals           REBLUE_SC_U32(304)
+#define g_SwappedBinormals         REBLUE_SC_U32(308)
+#define g_SwappedTangents          REBLUE_SC_U32(312)
+#define g_SwappedBlendWeights      REBLUE_SC_U32(316)
+#define g_SwappedPositions         REBLUE_SC_U32(320)
+#define g_SintTexcoords            REBLUE_SC_U32(324)
+#define g_ShadowPcfScale           REBLUE_SC_F32(328)
 #else
 #define g_Booleans                 vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256)
 #define g_SwappedTexcoords         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 260)
